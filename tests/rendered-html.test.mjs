@@ -1,16 +1,22 @@
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 async function render() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
+  const { default: server } = await import(workerUrl.href);
 
-  return worker.fetch(
-    new Request("http://localhost/", {
-      headers: { accept: "text/html" },
-    }),
+  const request = new Request("http://localhost/", {
+    headers: { accept: "text/html" },
+  });
+
+  if (typeof server === "function") {
+    return server(request);
+  }
+
+  return server.fetch(
+    request,
     {
       ASSETS: {
         fetch: async () => new Response("Not found", { status: 404 }),
@@ -30,13 +36,21 @@ test("server-renders the voting range app", async () => {
 
   const html = await response.text();
   assert.match(html, /<html[^>]*lang="ko"/i);
-  assert.match(html, /<title>투표 범위 분석 \| 최소·평균·최대 득표 예측<\/title>/i);
+  assert.match(html, /<title>투표 범위 분석<\/title>/i);
   assert.match(html, /VOTE SCOPE/);
   assert.match(html, /후보 설정/);
-  assert.match(html, /명단 불러오기/);
+  assert.match(html, /고정 명단/);
+  assert.match(html, /지아지윤/);
+  assert.match(html, /원겸리안/);
+  assert.match(html, /훈민정원/);
+  assert.match(html, /진원진우/);
+  assert.match(html, /강하연/);
+  assert.match(html, /최정원/);
   assert.match(html, /개인별 예상 선택/);
   assert.match(html, /예상 결과/);
-  assert.doesNotMatch(html, /codex-preview|SkeletonPreview|react-loading-skeleton/i);
+  assert.doesNotMatch(html, /투표의 가능성을|하나의 범위로/);
+  assert.doesNotMatch(html, /TXT 불러오기|후보 추가/);
+  assert.doesNotMatch(html, /SkeletonPreview|react-loading-skeleton/i);
 });
 
 test("calculates minimum, expected, maximum, score, and dense ties", async () => {
@@ -77,18 +91,21 @@ test("calculates minimum, expected, maximum, score, and dense ties", async () =>
   });
 });
 
-test("removes starter-only assets and keeps the social preview", async () => {
-  const [page, layout, packageJson] = await Promise.all([
+test("keeps the application local-only and free of starter scaffolding", async () => {
+  const [page, layout, packageJson, readme] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
+    readFile(new URL("../README.md", import.meta.url), "utf8"),
   ]);
 
-  assert.match(page, /MAX_CANDIDATES/);
-  assert.match(page, /addCandidate/);
-  assert.match(page, /TXT 불러오기/);
-  assert.match(layout, /투표 범위 분석/);
+  assert.match(page, /FIXED_CANDIDATE_NAMES/);
+  assert.match(page, /FIXED_PEOPLE_NAMES/);
+  assert.match(page, /readOnly/);
+  assert.doesNotMatch(page, /addCandidate|updateCandidateName|readTextFile|applyNames/);
+  assert.match(page, /prediction-list/);
+  assert.match(layout, /title: "투표 범위 분석"/);
+  assert.doesNotMatch(layout, /투표의 가능성을|하나의 범위로/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
-  await access(new URL("../public/og.png", import.meta.url));
-  await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
+  assert.match(readme, /로컬 전용/);
 });

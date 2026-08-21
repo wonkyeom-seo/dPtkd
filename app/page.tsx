@@ -4,17 +4,14 @@ import {
   BarChart3,
   Check,
   ChevronRight,
-  FileText,
   Info,
   LockKeyhole,
-  Plus,
   RefreshCcw,
   Search,
   Trash2,
-  UploadCloud,
   Users,
 } from "lucide-react";
-import type { CSSProperties, ChangeEvent, DragEvent } from "react";
+import type { CSSProperties } from "react";
 import { useMemo, useRef, useState } from "react";
 import { calculateVoteResults } from "./vote-math";
 
@@ -48,59 +45,75 @@ const CANDIDATE_PALETTE = [
   { color: "#475569", soft: "#eef1f5", ink: "#334155" },
 ] as const;
 
-const MIN_CANDIDATES = 2;
-const MAX_CANDIDATES = CANDIDATE_PALETTE.length;
-const MAX_PEOPLE = 1000;
-const MAX_FILE_SIZE = 2 * 1024 * 1024;
+const MIN_CANDIDATES = 1;
+const FIXED_CANDIDATE_NAMES = [
+  "지아지윤",
+  "원겸리안",
+  "훈민정원",
+  "진원진우",
+] as const;
+const FIXED_PEOPLE_NAMES = [
+  "강하연",
+  "권승현",
+  "김나윤",
+  "김리안",
+  "김슬",
+  "김지유",
+  "박제이",
+  "박지윤",
+  "박하린",
+  "신예은",
+  "심소율",
+  "이서린",
+  "정혜린",
+  "최다은",
+  "최지아",
+  "허은",
+  "김대원",
+  "김민준",
+  "김시우",
+  "김태경",
+  "김형준",
+  "김훈민",
+  "모준영",
+  "박진우",
+  "서원겸",
+  "이우진",
+  "이지환",
+  "이진원",
+  "장유한",
+  "최정원",
+] as const;
 
 function candidateLetter(index: number) {
   return String.fromCharCode(65 + index);
 }
 
-function makeCandidate(index: number, id = `team-${index + 1}`): Candidate {
+function makeCandidate(index: number, name: string): Candidate {
   return {
-    id,
-    name: `${index + 1}팀`,
+    id: `team-${index + 1}`,
+    name,
     letter: candidateLetter(index),
     ...CANDIDATE_PALETTE[index % CANDIDATE_PALETTE.length],
   };
 }
 
-const INITIAL_CANDIDATES = Array.from({ length: 4 }, (_, index) =>
-  makeCandidate(index),
+const INITIAL_CANDIDATES = FIXED_CANDIDATE_NAMES.map((name, index) =>
+  makeCandidate(index, name),
 );
 
-function createId() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const INITIAL_PEOPLE: Person[] = FIXED_PEOPLE_NAMES.map((name, index) => ({
+  id: `person-${index + 1}`,
+  name,
+  picks: [],
+}));
+
+function cloneInitialPeople() {
+  return INITIAL_PEOPLE.map((person) => ({ ...person, picks: [] }));
 }
 
-function parseNames(value: string) {
-  return value
-    .split(/\r?\n/)
-    .map((name) => name.trim())
-    .filter(Boolean);
-}
-
-function decodeNameFile(buffer: ArrayBuffer) {
-  const bytes = new Uint8Array(buffer);
-  if (bytes[0] === 0xff && bytes[1] === 0xfe) {
-    return new TextDecoder("utf-16le").decode(buffer);
-  }
-  if (bytes[0] === 0xfe && bytes[1] === 0xff) {
-    return new TextDecoder("utf-16be").decode(buffer);
-  }
-  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
-    return new TextDecoder("utf-8").decode(buffer);
-  }
-
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
-  } catch {
-    return new TextDecoder("euc-kr").decode(buffer);
-  }
+function cloneInitialCandidates() {
+  return INITIAL_CANDIDATES.map((candidate) => ({ ...candidate }));
 }
 
 function formatNumber(value: number) {
@@ -117,15 +130,13 @@ function candidateStyle(candidate: Candidate) {
 }
 
 export default function Home() {
-  const [candidates, setCandidates] = useState<Candidate[]>(INITIAL_CANDIDATES);
-  const [namesText, setNamesText] = useState("");
-  const [people, setPeople] = useState<Person[]>([]);
-  const [inputMode, setInputMode] = useState<"text" | "file">("text");
+  const [candidates, setCandidates] = useState<Candidate[]>(() =>
+    cloneInitialCandidates(),
+  );
+  const [people, setPeople] = useState<Person[]>(() => cloneInitialPeople());
   const [searchTerm, setSearchTerm] = useState("");
   const [onlyIncomplete, setOnlyIncomplete] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
   const [message, setMessage] = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<HTMLElement>(null);
 
   const completedPeople = useMemo(
@@ -151,27 +162,6 @@ export default function Home() {
     );
   }, [people]);
 
-  const invalidCandidateIds = useMemo(() => {
-    const normalized = candidates.map((candidate) =>
-      candidate.name.trim().toLocaleLowerCase("ko"),
-    );
-    return new Set(
-      candidates
-        .filter((_, index) => {
-          const name = normalized[index];
-          return (
-            !name ||
-            normalized.some(
-              (candidateName, candidateIndex) =>
-                candidateIndex !== index && candidateName === name,
-            )
-          );
-        })
-        .map((candidate) => candidate.id),
-    );
-  }, [candidates]);
-  const candidateNameIssue = invalidCandidateIds.size > 0;
-
   const visiblePeople = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLocaleLowerCase("ko");
     return people.filter((person) => {
@@ -182,139 +172,6 @@ export default function Home() {
       return matchesSearch && matchesStatus;
     });
   }, [onlyIncomplete, people, searchTerm]);
-
-  function syncPeopleFromText(text: string) {
-    const names = parseNames(text);
-    if (names.length > MAX_PEOPLE) {
-      setMessage(
-        `명단은 최대 ${MAX_PEOPLE.toLocaleString("ko-KR")}명까지 사용할 수 있어요. 인원을 나누어 다시 입력해 주세요.`,
-      );
-      return;
-    }
-    const usedIds = new Set<string>();
-
-    const nextPeople = names.map((name, index) => {
-      const samePosition = people[index];
-      if (
-        samePosition &&
-        samePosition.name === name &&
-        !usedIds.has(samePosition.id)
-      ) {
-        usedIds.add(samePosition.id);
-        return samePosition;
-      }
-
-      const existing = people.find(
-        (person) => person.name === name && !usedIds.has(person.id),
-      );
-      if (existing) {
-        usedIds.add(existing.id);
-        return existing;
-      }
-
-      const person = { id: createId(), name, picks: [] };
-      usedIds.add(person.id);
-      return person;
-    });
-
-    setPeople(nextPeople);
-    setSearchTerm("");
-    setOnlyIncomplete(false);
-
-    if (names.length === 0) {
-      setMessage("이름을 찾지 못했어요. 한 줄에 이름 하나씩 입력해 주세요.");
-    } else {
-      const rawLineCount = text.split(/\r?\n/).length;
-      const ignoredCount = Math.max(0, rawLineCount - names.length);
-      setMessage(
-        `${names.length}명을 명단에 반영했어요.${
-          ignoredCount ? ` 빈 줄 ${ignoredCount}개는 제외했어요.` : ""
-        }`,
-      );
-    }
-  }
-
-  function applyNames() {
-    syncPeopleFromText(namesText);
-  }
-
-  async function readTextFile(file?: File) {
-    if (!file) return;
-    if (!file.name.toLocaleLowerCase().endsWith(".txt")) {
-      setMessage("TXT 파일만 불러올 수 있어요.");
-      return;
-    }
-    if (file.size > MAX_FILE_SIZE) {
-      setMessage("파일이 너무 커요. 2MB 이하의 TXT 파일을 사용해 주세요.");
-      return;
-    }
-    if (
-      people.length > 0 &&
-      !window.confirm("현재 명단을 새 TXT 파일의 명단으로 바꿀까요?")
-    ) {
-      return;
-    }
-
-    try {
-      const buffer = await file.arrayBuffer();
-      const decoded = decodeNameFile(buffer);
-      setNamesText(decoded);
-      syncPeopleFromText(decoded);
-      setInputMode("text");
-    } catch {
-      setMessage("파일을 읽지 못했어요. UTF-8 형식의 TXT 파일인지 확인해 주세요.");
-    } finally {
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  }
-
-  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    void readTextFile(file);
-  }
-
-  function handleDrop(event: DragEvent<HTMLDivElement>) {
-    event.preventDefault();
-    setIsDragging(false);
-    void readTextFile(event.dataTransfer.files?.[0]);
-  }
-
-  function updateCandidateName(candidateId: string, name: string) {
-    setCandidates((current) =>
-      current.map((candidate) =>
-        candidate.id === candidateId ? { ...candidate, name } : candidate,
-      ),
-    );
-  }
-
-  function addCandidate() {
-    if (candidates.length >= MAX_CANDIDATES) {
-      setMessage(`후보는 최대 ${MAX_CANDIDATES}개까지 만들 수 있어요.`);
-      return;
-    }
-
-    setCandidates((current) => {
-      const usedColors = new Set(current.map((candidate) => candidate.color));
-      const usedNames = new Set(current.map((candidate) => candidate.name.trim()));
-      const paletteIndex = CANDIDATE_PALETTE.findIndex(
-        (palette) => !usedColors.has(palette.color),
-      );
-      const colorIndex = paletteIndex === -1 ? current.length : paletteIndex;
-      const firstUnusedNumber = Array.from(
-        { length: MAX_CANDIDATES },
-        (_, index) => index + 1,
-      ).find((number) => !usedNames.has(`${number}팀`));
-      const nextCandidate = {
-        id: createId(),
-        name: `${firstUnusedNumber ?? current.length + 1}팀`,
-        letter: candidateLetter(current.length),
-        ...CANDIDATE_PALETTE[colorIndex],
-      };
-      return [...current, nextCandidate];
-    });
-    setMessage("새 후보를 추가했어요. 이름을 자유롭게 바꿔 주세요.");
-  }
 
   function removeCandidate(candidateId: string) {
     if (candidates.length <= MIN_CANDIDATES) {
@@ -362,36 +219,19 @@ export default function Home() {
     setMessage("예상 결과를 새로 계산했어요.");
   }
 
-  function removePerson(personId: string) {
-    const nextPeople = people.filter((person) => person.id !== personId);
-    setPeople(nextPeople);
-    setNamesText(nextPeople.map((person) => person.name).join("\n"));
-    setMessage("명단에서 한 명을 삭제했어요.");
-  }
-
   function resetAll() {
     if (
       !window.confirm(
-        "모든 입력을 지울까요? 후보 설정, 명단과 선택 내역이 모두 삭제됩니다.",
+        "모든 선택 내역을 초기화할까요? 고정 후보와 명단은 유지됩니다.",
       )
     ) {
       return;
     }
-    setCandidates(INITIAL_CANDIDATES);
-    setNamesText("");
-    setPeople([]);
+    setCandidates(cloneInitialCandidates());
+    setPeople(cloneInitialPeople());
     setSearchTerm("");
     setOnlyIncomplete(false);
-    setMessage("모든 입력을 초기화했어요.");
-  }
-
-  function getDuplicateIndex(person: Person) {
-    if (!duplicateNames.has(person.name)) return null;
-    return (
-      people
-        .filter((item) => item.name === person.name)
-        .findIndex((item) => item.id === person.id) + 1
-    );
+    setMessage("선택 내역을 초기화했어요.");
   }
 
   const expectedTotal = results.reduce(
@@ -420,58 +260,6 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="hero" id="top">
-        <div className="hero-copy">
-          <span className="eyebrow">
-            후보 수 자유 설정 · 실시간 범위 분석
-          </span>
-          <h1>
-            투표의 가능성을,
-            <br />
-            <span>하나의 범위로.</span>
-          </h1>
-          <p>
-            각 사람이 투표할 가능성이 있는 후보를 모두 표시하면 확정 최소표부터
-            평균 예상표, 가능 최대표까지 바로 계산해 드려요.
-          </p>
-        </div>
-        <div className="hero-summary" aria-label="현재 명단 진행 상황">
-          <div className="summary-orbit" aria-hidden="true">
-            <span className="orbit-dot orbit-a" />
-            <span className="orbit-dot orbit-b" />
-            <span className="orbit-dot orbit-c" />
-            <span className="orbit-dot orbit-d" />
-            <strong>{people.length}</strong>
-            <small>전체 인원</small>
-          </div>
-          <div className="summary-copy">
-            <span>현재 진행률 · 후보 {candidates.length}개</span>
-            <strong>
-              {completedPeople.length}
-              <small> / {people.length}명</small>
-            </strong>
-            <div className="summary-progress" aria-hidden="true">
-              <span
-                style={{
-                  width: `${
-                    people.length
-                      ? (completedPeople.length / people.length) * 100
-                      : 0
-                  }%`,
-                }}
-              />
-            </div>
-            <p>
-              {incompleteCount
-                ? `${incompleteCount}명 선택 대기 중`
-                : people.length
-                  ? "모든 선택 완료"
-                  : "명단을 먼저 입력해 주세요"}
-            </p>
-          </div>
-        </div>
-      </section>
-
       <div className="workspace-grid">
         <div className="work-column">
           <section className="panel setup-panel" aria-labelledby="candidate-heading">
@@ -479,7 +267,7 @@ export default function Home() {
               <span className="step-number">01</span>
               <div>
                 <h2 id="candidate-heading">후보 설정</h2>
-                <p>후보 수를 조절하고 이름을 자유롭게 지정하세요.</p>
+                <p>고정 후보 중 필요한 후보만 남길 수 있어요.</p>
               </div>
               <span className="count-chip">{candidates.length}개 후보</span>
             </div>
@@ -501,16 +289,8 @@ export default function Home() {
                     <input
                       type="text"
                       value={candidate.name}
-                      maxLength={30}
-                      onChange={(event) =>
-                        updateCandidateName(candidate.id, event.target.value)
-                      }
-                      aria-invalid={invalidCandidateIds.has(candidate.id)}
-                      aria-describedby={
-                        invalidCandidateIds.has(candidate.id)
-                          ? "candidate-name-warning"
-                          : undefined
-                      }
+                      readOnly
+                      aria-readonly="true"
                     />
                   </label>
                   <button
@@ -528,28 +308,9 @@ export default function Home() {
                   </button>
                 </div>
               ))}
-              <button
-                className="add-candidate-button"
-                type="button"
-                onClick={addCandidate}
-                disabled={candidates.length >= MAX_CANDIDATES}
-              >
-                <Plus size={17} aria-hidden="true" />
-                후보 추가
-              </button>
             </div>
             <div className="candidate-footnote">
-              <span>최소 {MIN_CANDIDATES}개 · 최대 {MAX_CANDIDATES}개</span>
-              {candidateNameIssue && (
-                <p
-                  className="inline-warning"
-                  id="candidate-name-warning"
-                  role="alert"
-                >
-                  <Info size={15} aria-hidden="true" />
-                  비어 있거나 같은 후보 이름이 있어요. 서로 다르게 입력해 주세요.
-                </p>
-              )}
+              <span>총 4개 고정 · 최소 {MIN_CANDIDATES}개까지 선택</span>
             </div>
           </section>
 
@@ -557,96 +318,16 @@ export default function Home() {
             <div className="section-heading">
               <span className="step-number">02</span>
               <div>
-                <h2 id="names-heading">명단 불러오기</h2>
-                <p>한 줄에 이름 하나씩, TXT 또는 직접 입력으로 준비하세요.</p>
+                <h2 id="names-heading">고정 명단</h2>
+                <p>투표 대상 30명</p>
               </div>
-              {people.length > 0 && (
-                <span className="count-chip">{people.length}명</span>
-              )}
+              <span className="count-chip">{people.length}명</span>
             </div>
-
-            <div className="mode-switch" role="group" aria-label="명단 입력 방법">
-              <button
-                type="button"
-                aria-pressed={inputMode === "text"}
-                className={inputMode === "text" ? "active" : ""}
-                onClick={() => setInputMode("text")}
-              >
-                <FileText size={16} aria-hidden="true" />
-                직접 입력
-              </button>
-              <button
-                type="button"
-                aria-pressed={inputMode === "file"}
-                className={inputMode === "file" ? "active" : ""}
-                onClick={() => setInputMode("file")}
-              >
-                <UploadCloud size={16} aria-hidden="true" />
-                TXT 불러오기
-              </button>
-            </div>
-
-            {inputMode === "text" ? (
-              <div className="text-entry">
-                <label htmlFor="name-list">이름 명단</label>
-                <textarea
-                  id="name-list"
-                  value={namesText}
-                  onChange={(event) => setNamesText(event.target.value)}
-                  placeholder={"김하늘\n박지민\n이서준\n최유나"}
-                  rows={6}
-                  spellCheck={false}
-                />
-                <div className="entry-actions">
-                  <span>
-                    빈 줄은 제외 · 최대 {MAX_PEOPLE.toLocaleString("ko-KR")}명
-                  </span>
-                  <button
-                    className="primary-button"
-                    type="button"
-                    onClick={applyNames}
-                  >
-                    명단 적용하기
-                    <ChevronRight size={17} aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div
-                className={`drop-zone ${isDragging ? "dragging" : ""}`}
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  setIsDragging(true);
-                }}
-                onDragLeave={() => setIsDragging(false)}
-                onDrop={handleDrop}
-              >
-                <div className="upload-icon" aria-hidden="true">
-                  <UploadCloud size={24} />
-                </div>
-                <strong>TXT 파일을 여기에 놓으세요</strong>
-                <p>또는 파일을 찾아 명단을 한 번에 불러오세요.</p>
-                <button
-                  className="outline-button"
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  TXT 파일 선택
-                </button>
-                <input
-                  ref={fileInputRef}
-                  className="sr-only"
-                  type="file"
-                  accept=".txt,text/plain"
-                  onChange={handleFileChange}
-                />
-                <small>
-                  <LockKeyhole size={12} aria-hidden="true" />
-                  파일은 외부로 전송되지 않아요 · 최대 2MB
-                </small>
-              </div>
-            )}
-
+            <ol className="fixed-name-list" aria-label="고정 투표 대상 명단">
+              {FIXED_PEOPLE_NAMES.map((name) => (
+                <li key={name}>{name}</li>
+              ))}
+            </ol>
             <p className="status-message" aria-live="polite">
               {message}
             </p>
@@ -670,7 +351,7 @@ export default function Home() {
                   <Users size={26} />
                 </span>
                 <strong>아직 명단이 없어요</strong>
-                <p>위에서 TXT 파일을 불러오거나 이름을 직접 입력해 주세요.</p>
+                <p>고정 명단을 불러오지 못했어요.</p>
               </div>
             ) : (
               <>
@@ -713,95 +394,72 @@ export default function Home() {
                   </p>
                 )}
 
-                <div className="table-wrap">
-                  <table className="prediction-table">
-                    <caption className="sr-only">
-                      사람별로 투표 가능성이 있는 후보를 하나 이상 선택하는 표
-                    </caption>
-                    <thead>
-                      <tr>
-                        <th scope="col">이름</th>
-                        {candidates.map((candidate) => (
-                          <th scope="col" key={candidate.id}>
-                            <span
-                              className="table-team"
-                              style={candidateStyle(candidate)}
-                            >
-                              <b>{candidate.letter}</b>
-                              {candidate.name.trim() || "이름 없음"}
-                            </span>
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {visiblePeople.map((person) => {
-                        const duplicateIndex = getDuplicateIndex(person);
-                        return (
-                          <tr
-                            key={person.id}
-                            className={
-                              person.picks.length === 0 ? "incomplete-row" : ""
-                            }
-                          >
-                            <th scope="row">
-                              <div className="person-name">
-                                <span>
-                                  {person.name}
-                                  {duplicateIndex && (
-                                    <small> ({duplicateIndex})</small>
+                <div
+                  className="prediction-list"
+                  role="list"
+                  aria-label="사람별 예상 후보 선택"
+                >
+                  {visiblePeople.map((person) => {
+                    const duplicateIndex = duplicateNames.has(person.name)
+                      ? people
+                          .filter((item) => item.name === person.name)
+                          .findIndex((item) => item.id === person.id) + 1
+                      : null;
+                    return (
+                      <article
+                        className={`prediction-person-card ${
+                          person.picks.length === 0 ? "incomplete-row" : ""
+                        }`}
+                        key={person.id}
+                        role="listitem"
+                      >
+                        <div className="person-name">
+                          <span>
+                            {person.name}
+                            {duplicateIndex && <small> ({duplicateIndex})</small>}
+                          </span>
+                          {person.picks.length === 0 && <em>미선택</em>}
+                        </div>
+
+                        <div className="candidate-pick-grid">
+                          {candidates.map((candidate) => {
+                            const checked = person.picks.includes(candidate.id);
+                            return (
+                              <label
+                                className={`pick-chip ${
+                                  checked ? "selected" : ""
+                                }`}
+                                key={candidate.id}
+                                style={candidateStyle(candidate)}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() =>
+                                    togglePick(person.id, candidate.id)
+                                  }
+                                  aria-label={`${person.name}, ${
+                                    candidate.name || candidate.letter
+                                  } 선택 가능`}
+                                />
+                                <span className="pick-check" aria-hidden="true">
+                                  {checked ? (
+                                    <Check size={15} strokeWidth={3} />
+                                  ) : (
+                                    candidate.letter
                                   )}
                                 </span>
-                                {person.picks.length === 0 && <em>미선택</em>}
-                                <button
-                                  type="button"
-                                  onClick={() => removePerson(person.id)}
-                                  aria-label={`${person.name} 명단에서 삭제`}
-                                  title="명단에서 삭제"
-                                >
-                                  <Trash2 size={15} aria-hidden="true" />
-                                </button>
-                              </div>
-                            </th>
-                            {candidates.map((candidate) => {
-                              const checked = person.picks.includes(candidate.id);
-                              return (
-                                <td key={candidate.id}>
-                                  <label
-                                    className={`pick-chip ${
-                                      checked ? "selected" : ""
-                                    }`}
-                                    style={candidateStyle(candidate)}
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
-                                      onChange={() =>
-                                        togglePick(person.id, candidate.id)
-                                      }
-                                      aria-label={`${person.name}, ${
-                                        candidate.name || candidate.letter
-                                      } 선택 가능`}
-                                    />
-                                    <span className="pick-check" aria-hidden="true">
-                                      {checked ? (
-                                        <Check size={15} strokeWidth={3} />
-                                      ) : (
-                                        candidate.letter
-                                      )}
-                                    </span>
-                                    <span className="pick-name">
-                                      {candidate.name.trim() || "이름 없음"}
-                                    </span>
-                                  </label>
-                                </td>
-                              );
-                            })}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                                <span className="pick-name">
+                                  {candidate.name.trim() || "이름 없음"}
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </article>
+                    );
+                  })}
+
                   {visiblePeople.length === 0 && (
                     <div className="no-filter-results">
                       조건에 맞는 이름이 없어요.
