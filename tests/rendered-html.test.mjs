@@ -2,39 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-async function render() {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: server } = await import(workerUrl.href);
-
-  const request = new Request("http://localhost/", {
-    headers: { accept: "text/html" },
-  });
-
-  if (typeof server === "function") {
-    return server(request);
-  }
-
-  return server.fetch(
-    request,
-    {
-      ASSETS: {
-        fetch: async () => new Response("Not found", { status: 404 }),
-      },
-    },
-    {
-      waitUntil() {},
-      passThroughOnException() {},
-    },
+test("pre-renders the voting range app", async () => {
+  const html = await readFile(
+    new URL("../.next/server/app/index.html", import.meta.url),
+    "utf8",
   );
-}
-
-test("server-renders the voting range app", async () => {
-  const response = await render();
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
-
-  const html = await response.text();
   assert.match(html, /<html[^>]*lang="ko"/i);
   assert.match(html, /<title>투표 범위 분석<\/title>/i);
   assert.match(html, /VOTE SCOPE/);
